@@ -10,6 +10,9 @@ YELLOW='\033[0;33m'
 NC='\033[0m'
 
 SESSION_NAME="zenos-rebuild"
+DEFAULT_FLAKE_PATH="/Config/ZenOS"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+STATE_FILE="$STATE_HOME/zenos/rebuild-root"
 
 # --- Notification Helper ---
 notify() {
@@ -105,13 +108,37 @@ if [ -n "$FLAKE_PATH" ]; then
     fi
 elif [ -f "$PWD/flake.nix" ]; then
     FLAKE_PATH="$PWD"
-elif [ -f "$HOME/zenos-config/flake.nix" ]; then
-    FLAKE_PATH="$HOME/zenos-config"
+elif [ -f "$STATE_FILE" ] && [ -f "$(cat "$STATE_FILE")/flake.nix" ]; then
+    FLAKE_PATH="$(cat "$STATE_FILE")"
+elif [ -f "$DEFAULT_FLAKE_PATH/flake.nix" ]; then
+    FLAKE_PATH="$DEFAULT_FLAKE_PATH"
 elif [ -f "/etc/nixos/flake.nix" ]; then
     FLAKE_PATH="/etc/nixos"
 else
     echo -e "${RED}[!] Error: Could not locate flake.nix${NC}"
-    notify "Error" "Could not locate flake.nix in PWD, ~/zenos-config, or /etc/nixos." "critical"
+    notify "Error" "Could not locate a flake in PWD, the last location, $DEFAULT_FLAKE_PATH, or /etc/nixos." "critical"
+    exit 1
+fi
+
+FLAKE_PATH="$(realpath "$FLAKE_PATH")"
+mkdir -p "$(dirname "$STATE_FILE")"
+printf '%s\n' "$FLAKE_PATH" > "$STATE_FILE.tmp"
+mv "$STATE_FILE.tmp" "$STATE_FILE"
+
+HOST_DIR="$FLAKE_PATH/hosts/$TARGET_HOST"
+HOST_ZCFG="$HOST_DIR/host.zcfg"
+HOST_NIX="$HOST_DIR/host.nix"
+if [ -f "$HOST_ZCFG" ]; then
+    if ! command -v zcfg >/dev/null 2>&1; then
+        echo -e "${RED}[!] Error: zcfg compiler is not installed${NC}"
+        notify "Error" "The zcfg compiler is not installed." "critical"
+        exit 1
+    fi
+    echo -e "${BLUE}[Config] Compiling $HOST_ZCFG${NC}"
+    zcfg compile "$HOST_ZCFG" -o "$HOST_NIX"
+elif [ ! -f "$HOST_NIX" ]; then
+    echo -e "${RED}[!] Error: No host.zcfg found for $TARGET_HOST${NC}"
+    notify "Error" "No host.zcfg found for $TARGET_HOST." "critical"
     exit 1
 fi
 
