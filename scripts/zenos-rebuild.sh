@@ -120,7 +120,13 @@ else
     exit 1
 fi
 
-FLAKE_PATH="$(realpath "$FLAKE_PATH")"
+resolved_path="$(realpath "$FLAKE_PATH")"
+if [ -f "$DEFAULT_FLAKE_PATH/flake.nix" ] \
+    && [ "$resolved_path" = "$(realpath "$DEFAULT_FLAKE_PATH")" ]; then
+    FLAKE_PATH="$DEFAULT_FLAKE_PATH"
+else
+    FLAKE_PATH="$resolved_path"
+fi
 mkdir -p "$(dirname "$STATE_FILE")"
 printf '%s\n' "$FLAKE_PATH" > "$STATE_FILE.tmp"
 mv "$STATE_FILE.tmp" "$STATE_FILE"
