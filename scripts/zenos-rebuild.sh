@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
+umask 077
 
 # --- Configuration & Colors ---
 BLUE='\033[0;34m'
@@ -28,7 +29,7 @@ notify() {
 
 # --- 1. Tmux Safety Check ---
 # If we are not inside tmux, re-launch self inside tmux
-if [ -z "$TMUX" ]; then
+if [ -z "${TMUX:-}" ]; then
     echo -e "${YELLOW}[Safety] Not in Tmux. Launching safe-mode session...${NC}"
     
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -43,7 +44,8 @@ if [ -z "$TMUX" ]; then
         
         # Send the command to the session
         # We pass "$@" to ensure flags like -r or -l are preserved inside the session
-        tmux send-keys -t "$SESSION_NAME" "bash $0 $@; echo -e '\nPress Enter to exit...'; read; exit" C-m
+        printf -v rebuild_command '%q ' bash "$0" "$@"
+        tmux send-keys -t "$SESSION_NAME" "${rebuild_command}; echo; echo 'Press Enter to exit...'; read -r; exit" C-m
         
         # Attach to the configured session
         exec tmux attach-session -t "$SESSION_NAME"
@@ -65,16 +67,19 @@ FLAKE_PATH=""
 FORCE_HOST=""
 AUTO_REBOOT=false
 AUTO_LOGOUT=false
+SHOW_GENERATED=false
 
 # Argument Parsing
 while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
         -h|--host)
+        [ "$#" -ge 2 ] || { echo 'Missing host name' >&2; exit 2; }
         FORCE_HOST="$2"
         shift 2
         ;;
         -d|--dir)
+        [ "$#" -ge 2 ] || { echo 'Missing configuration directory' >&2; exit 2; }
         FLAKE_PATH="$2"
         shift 2
         ;;
@@ -86,10 +91,13 @@ while [[ $# -gt 0 ]]; do
         AUTO_LOGOUT=true
         shift
         ;;
+        --show-generated)
+        SHOW_GENERATED=true
+        shift
+        ;;
         *)
-        # Pass unknown args to nixos-rebuild eventually? 
-        # For now, we assume simple usage.
-        break
+        echo "Unknown argument: $key" >&2
+        exit 2
         ;;
     esac
 done
@@ -121,34 +129,27 @@ else
 fi
 
 resolved_path="$(realpath "$FLAKE_PATH")"
-if [ -f "$DEFAULT_FLAKE_PATH/flake.nix" ] \
-    && [ "$resolved_path" = "$(realpath "$DEFAULT_FLAKE_PATH")" ]; then
-    FLAKE_PATH="$DEFAULT_FLAKE_PATH"
-else
-    FLAKE_PATH="$resolved_path"
-fi
+FLAKE_PATH="$resolved_path"
 mkdir -p "$(dirname "$STATE_FILE")"
 printf '%s\n' "$FLAKE_PATH" > "$STATE_FILE.tmp"
 mv "$STATE_FILE.tmp" "$STATE_FILE"
 
 HOST_DIR="$FLAKE_PATH/hosts/$TARGET_HOST"
 HOST_ZCFG="$HOST_DIR/host.zcfg"
-HOST_NIX="$HOST_DIR/host.nix"
-if [ -f "$HOST_ZCFG" ]; then
-    if ! command -v zcfg >/dev/null 2>&1; then
-        echo -e "${RED}[!] Error: zcfg compiler is not installed${NC}"
-        notify "Error" "The zcfg compiler is not installed." "critical"
-        exit 1
-    fi
-    echo -e "${BLUE}[Config] Compiling $HOST_ZCFG${NC}"
-    zcfg compile "$HOST_ZCFG" -o "$HOST_NIX"
-elif [ ! -f "$HOST_NIX" ]; then
+if [ ! -f "$HOST_ZCFG" ]; then
     echo -e "${RED}[!] Error: No host.zcfg found for $TARGET_HOST${NC}"
     notify "Error" "No host.zcfg found for $TARGET_HOST." "critical"
     exit 1
 fi
 
 FLAKE_URI="${FLAKE_PATH}#${TARGET_HOST}"
+SNAPSHOT_HELPER="$(dirname "$(realpath "$0")")/snapshot.py"
+LOG_DIR="$STATE_HOME/zenos/rebuild-logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE=$(mktemp "$LOG_DIR/rebuild-$(date +%Y%m%d-%H%M%S)-XXXXXX.log")
+echo -e "${BLUE}[Log] $LOG_FILE${NC}"
+snapshot_options=()
+[ "$SHOW_GENERATED" = false ] || snapshot_options+=(--show-generated)
 
 # --- 4. Execution ---
 notify "Rebuild Started" "Target: $TARGET_HOST" "normal"
@@ -157,7 +158,9 @@ echo -e "${BLUE}========================================${NC}"
 echo -e "  ${GREEN}ZenOS Rebuild${NC}"
 echo -e "  Target: ${YELLOW}${FLAKE_URI}${NC}"
 echo -e "  Optimization: ${YELLOW}-j${MAX_JOBS} -c${CORES_PER_JOB}${NC}"
-if [ "$AUTO_REBOOT" = true ]; then
+if [ "$SHOW_GENERATED" = true ]; then
+    echo -e "  Mode: ${YELLOW}GENERATED VIEW (NO SWITCH)${NC}"
+elif [ "$AUTO_REBOOT" = true ]; then
     echo -e "  Post-Action: ${RED}AUTO-REBOOT ENABLED${NC}"
 elif [ "$AUTO_LOGOUT" = true ]; then
     echo -e "  Post-Action: ${YELLOW}AUTO-LOGOUT ENABLED${NC}"
@@ -167,23 +170,27 @@ echo -e "${BLUE}========================================${NC}"
 # Temporarily disable 'set -e' to capture exit code manually
 set +e
 
-# Run the build directly.
-sudo nixos-rebuild switch \
-    --flake "$FLAKE_URI" \
+# The privileged helper owns a private snapshot for the entire Nix invocation.
+# Compilation is the flake's job, using its pinned current compiler.
+sudo python3 "$SNAPSHOT_HELPER" "$(realpath "$FLAKE_PATH")" "$TARGET_HOST" "${snapshot_options[@]}" \
     --show-trace \
     --print-build-logs \
     --option max-jobs "$MAX_JOBS" \
     --option cores "$CORES_PER_JOB" \
-    --option accept-flake-config true
+    --option accept-flake-config true 2>&1 | tee "$LOG_FILE"
 
-EXIT_CODE=$?
+EXIT_CODE=${PIPESTATUS[0]}
 
 # Re-enable strict mode
 set -e
 
 echo -e "${BLUE}========================================${NC}"
 
-if [ $EXIT_CODE -eq 0 ]; then
+if [ "$EXIT_CODE" -eq 0 ]; then
+    if [ "$SHOW_GENERATED" = true ]; then
+        notify "Generated Configuration" "Store output is listed in $LOG_FILE" "normal"
+        exit 0
+    fi
     notify "Rebuild Complete" "System switched successfully." "normal"
     echo -e "${GREEN}SUCCESS: System updated.${NC}"
 
@@ -198,10 +205,10 @@ if [ $EXIT_CODE -eq 0 ]; then
         notify "System" "Logging out in 3 seconds..." "critical"
         sleep 3
         # Attempt to terminate the current session gracefully via systemd
-        loginctl terminate-session "${XDG_SESSION_ID:-self}" || kill -9 -1
+        loginctl terminate-session "${XDG_SESSION_ID:-self}"
     fi
 
-elif [ $EXIT_CODE -eq 130 ]; then
+elif [ "$EXIT_CODE" -eq 130 ]; then
     # 130 is the standard exit code for SIGINT (Ctrl+C)
     notify "Rebuild Interrupted" "Operation cancelled by user." "low"
     echo -e "${YELLOW}INFO: Rebuild cancelled by user (Exit Code: 130).${NC}"
@@ -209,5 +216,5 @@ elif [ $EXIT_CODE -eq 130 ]; then
 else
     notify "Rebuild Failed" "Check the terminal logs for details." "critical"
     echo -e "${RED}FAILURE: Rebuild encountered errors (Exit Code: $EXIT_CODE).${NC}"
-    exit $EXIT_CODE
+    exit "$EXIT_CODE"
 fi
