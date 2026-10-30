@@ -53,6 +53,24 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unexpected configuration root entry"):
             self.materialize()
 
+    def test_agent_instructions_are_regular_private_snapshot_files(self):
+        instructions = self.config / "AGENTS.md"
+        instructions.write_text("Keep this configuration under Git.\n")
+        self.materialize()
+        copied = self.output / "AGENTS.md"
+        self.assertEqual(copied.read_bytes(), instructions.read_bytes())
+        self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o600)
+
+    def test_agent_instructions_symlink_is_rejected(self):
+        (self.config / "AGENTS.md").symlink_to(self.config / "flake.nix")
+        with self.assertRaisesRegex(ValueError, "unexpected source symlink"):
+            self.materialize()
+
+    def test_agent_instructions_directory_is_rejected(self):
+        (self.config / "AGENTS.md").mkdir()
+        with self.assertRaisesRegex(ValueError, "expected a regular root file"):
+            self.materialize()
+
     def test_all_d19_zcfg_names_are_supported(self):
         self.link.rename(self.user / "apps.zcfg")
         (self.user / "apps.zcfg").unlink()

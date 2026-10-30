@@ -61,7 +61,7 @@ def materialize(source, destination, *, machine_root="/"):
                     if name == ".git":
                         continue
                     if name not in {
-                        "flake.nix", "flake.lock", "hosts", "README.md",
+                        "flake.nix", "flake.lock", "hosts", "README.md", "AGENTS.md",
                         "base-effective.json", ".gitignore",
                     }:
                         raise ValueError(f"unexpected configuration root entry: {name}")

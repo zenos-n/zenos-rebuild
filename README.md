@@ -12,7 +12,7 @@ Reboot/logout are requested only after a successful switch. No per-user
 
 Editable configuration contains `flake.nix`, optional `flake.lock`, and
 `hosts/<hostname>/host.zcfg` with split ZCFG and Setup JSON metadata.
-`README.md`, `.gitignore` and root `.git` metadata are also accepted; `.git` is
+Regular `README.md`, `AGENTS.md`, `.gitignore` and root `.git` metadata are also accepted; `.git` is
 excluded from the snapshot. Other root entries and generated host Nix are
 rejected. This is the current DSL contract, not a legacy `host.nix` fallback.
 
