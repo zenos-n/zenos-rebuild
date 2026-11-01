@@ -70,6 +70,10 @@ class WrapperTests(unittest.TestCase):
         self.assertIn("mock build log", log.read_text())
         self.assertEqual(log.stat().st_mode & 0o777, 0o600)
         self.assertTrue(any("Rebuild Complete" in call for call in calls))
+        notifications = [call for call in calls if call[0] == "notify-send"]
+        self.assertEqual(len(notifications), 2)
+        for call in notifications:
+            self.assertIn("string:desktop-entry:com.neg-zero.zenos-rebuild", call)
         self.assertFalse((self.config / "hosts/test/host.nix").exists())
 
     def test_failure_survives_tee_and_does_not_reboot(self):

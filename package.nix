@@ -18,6 +18,7 @@ stdenvNoCC.mkDerivation {
     root = ./.;
     fileset = lib.fileset.unions [
       ./scripts
+      ./data
       ./tests
     ];
   };
@@ -33,6 +34,7 @@ stdenvNoCC.mkDerivation {
     shellcheck scripts/zenos-rebuild.sh
   '';
   installPhase = ''
+    install -Dm644 data/com.neg-zero.zenos-rebuild.desktop "$out/share/applications/com.neg-zero.zenos-rebuild.desktop"
     install -Dm755 scripts/zenos-rebuild.sh "$out/libexec/zenos-rebuild/zenos-rebuild"
     install -Dm644 scripts/snapshot.py "$out/libexec/zenos-rebuild/snapshot.py"
     patchShebangs "$out/libexec/zenos-rebuild/zenos-rebuild"

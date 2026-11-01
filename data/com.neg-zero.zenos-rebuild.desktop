@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ZenOS Rebuild
+Comment=Rebuild the ZenOS system configuration
+Exec=zenos-rebuild
+Icon=zenos-symbolic
+Terminal=true
+NoDisplay=true
+X-GNOME-UsesNotifications=true
+Categories=System;
