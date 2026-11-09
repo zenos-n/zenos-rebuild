@@ -172,7 +172,13 @@ set +e
 
 # The privileged helper owns a private snapshot for the entire Nix invocation.
 # Compilation is the flake's job, using its pinned current compiler.
-sudo python3 "$SNAPSHOT_HELPER" "$(realpath "$FLAKE_PATH")" "$TARGET_HOST" "${snapshot_options[@]}" \
+monitor=()
+if [ -t 2 ] && [ "$SHOW_GENERATED" = false ] && command -v zenos-nix-monitor >/dev/null; then
+    exec {monitor_fd}>&2
+    export ZENOS_NOM_TTY_FD="$monitor_fd"
+    monitor=(zenos-nix-monitor --rebuild)
+fi
+"${monitor[@]}" sudo python3 "$SNAPSHOT_HELPER" "$(realpath "$FLAKE_PATH")" "$TARGET_HOST" "${snapshot_options[@]}" \
     --show-trace \
     --print-build-logs \
     --option max-jobs "$MAX_JOBS" \
@@ -180,6 +186,10 @@ sudo python3 "$SNAPSHOT_HELPER" "$(realpath "$FLAKE_PATH")" "$TARGET_HOST" "${sn
     --option accept-flake-config true 2>&1 | tee "$LOG_FILE"
 
 EXIT_CODE=${PIPESTATUS[0]}
+if [ -n "${monitor_fd-}" ]; then
+    exec {monitor_fd}>&-
+    unset ZENOS_NOM_TTY_FD
+fi
 
 # Re-enable strict mode
 set -e

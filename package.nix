@@ -10,6 +10,7 @@
   nix,
   nixos-rebuild,
   shellcheck,
+  nixMonitor ? null,
 }:
 stdenvNoCC.mkDerivation {
   pname = "zenos-rebuild";
@@ -46,12 +47,12 @@ stdenvNoCC.mkDerivation {
       --replace-fail '["nixos-rebuild",' '["${nixos-rebuild}/bin/nixos-rebuild",'
     makeWrapper "$out/libexec/zenos-rebuild/zenos-rebuild" "$out/bin/zenos-rebuild" \
       --prefix PATH : ${
-        lib.makeBinPath [
+        lib.makeBinPath ([
           bash
           coreutils
           tmux
           libnotify
-        ]
+        ] ++ lib.optional (nixMonitor != null) nixMonitor)
       }
   '';
   meta = {
