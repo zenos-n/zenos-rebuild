@@ -1,10 +1,13 @@
 import json
 import os
+import pty
+import select
 from pathlib import Path
 import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -23,8 +26,16 @@ elif name == "tmux" and sys.argv[1] == "has-session":
     sys.exit(1)
 elif name == "sudo":
     if len(sys.argv) > 2 and sys.argv[2].endswith("snapshot.py"):
-        print("mock build log")
+        print("mock build log", flush=True)
+        if os.environ.get("REPORT_TTY"):
+            print("HELPER_TTY=" + json.dumps([os.isatty(i) for i in range(3)]), flush=True)
         sys.exit(int(os.environ.get("REBUILD_EXIT", "0")))
+elif name == "nom":
+    if os.environ.get("NOM_FAIL"):
+        sys.exit(9)
+    print("RENDERER_TTY=" + json.dumps([os.isatty(i) for i in range(3)]), file=sys.stderr)
+    for line in sys.stdin:
+        print("RENDERED:" + line.rstrip(), file=sys.stderr, flush=True)
 elif name == "sleep":
     pass
 '''
@@ -41,7 +52,7 @@ class WrapperTests(unittest.TestCase):
         (self.config / "hosts/test/host.zcfg").write_text('legacy.networking.hostName = "test";')
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("hostname", "nproc", "tmux", "sudo", "notify-send", "sleep", "loginctl"):
+        for name in ("hostname", "nproc", "tmux", "sudo", "notify-send", "sleep", "loginctl", "nom"):
             command = self.bin / name
             command.write_text(f"#!{sys.executable}\n" + MOCK)
             command.chmod(0o755)
@@ -55,6 +66,59 @@ class WrapperTests(unittest.TestCase):
     def run_script(self, *arguments, **environment):
         return subprocess.run(["bash", str(SCRIPT), *arguments], cwd=self.root,
                               env=self.env | environment, capture_output=True, text=True)
+
+    def run_terminal(self, **environment):
+        master, slave = pty.openpty()
+        proc = subprocess.Popen(["bash", str(SCRIPT), "-d", str(self.config)],
+                                cwd=self.root, stdin=slave, stdout=slave, stderr=slave,
+                                env=self.env | environment)
+        os.close(slave)
+        output = bytearray()
+        try:
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], 0.1)[0]:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+            return proc.wait(timeout=1), output.decode()
+        finally:
+            os.close(master)
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def test_interactive_single_renderer_and_plain_log(self):
+        code, output = self.run_terminal(REBUILD_EXIT="42", REPORT_TTY="1")
+        self.assertEqual(code, 42, output)
+        self.assertIn("RENDERER_TTY=[false, true, true]", output)
+        self.assertIn('RENDERED:HELPER_TTY=[true, false, false]', output)
+        self.assertEqual(output.count("mock build log"), 1, output)
+        self.assertIn("RENDERED:mock build log", output)
+        log = next((self.root / "state/zenos/rebuild-logs").glob("*.log")).read_text()
+        self.assertIn("mock build log", log)
+        self.assertNotIn("RENDERED:", log)
+        self.assertNotIn("RENDERER_TTY", log)
+        sudo = next(call for call in self.calls() if call[0] == "sudo")
+        self.assertNotIn("json-log-path", sudo)
+        self.assertNotIn("--log-format", sudo)
+
+    def test_renderer_failure_drains_logs_and_keeps_build_failure(self):
+        code, output = self.run_terminal(REBUILD_EXIT="42", NOM_FAIL="1")
+        self.assertEqual(code, 42, output)
+        self.assertIn("mock build log", output)
+        log = next((self.root / "state/zenos/rebuild-logs").glob("*.log")).read_text()
+        self.assertIn("mock build log", log)
+
+    def test_interactive_opt_out_keeps_plain_output(self):
+        code, output = self.run_terminal(ZENOS_NOM="0")
+        self.assertEqual(code, 0, output)
+        self.assertIn("mock build log", output)
+        self.assertFalse(any(call[0] == "nom" for call in self.calls()))
 
     def calls(self):
         return [json.loads(line) for line in self.events.read_text().splitlines()]

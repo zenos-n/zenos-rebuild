@@ -58,7 +58,9 @@ Run `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` and
 real switch/desktop acceptance belongs in a disposable ZenOS VM. Tests never
 invoke sudo, a real rebuild, or a VM lifecycle action.
 
-Interactive rebuilds use the optional ZenOS Nix monitor while keeping the original
-raw diagnostic log and snapshot helper's exit status. The progress renderer gets
-a duplicate of the terminal, so its redraw sequences do not enter the saved log.
-Generated-view and noninteractive invocation retain their existing output.
+Interactive rebuilds pipe all helper output through the original plain diagnostic
+log and then NOM's human-readable log consumer. NOM owns terminal output while
+building, so raw log lines cannot collide with graph redraws. The helper's exit
+status is preserved and a failed renderer falls back to draining plain output.
+Generated views, noninteractive invocation and `ZENOS_NOM=0` keep plain output.
+The separate socket monitor remains for `nix run`/`shell` application handoffs.

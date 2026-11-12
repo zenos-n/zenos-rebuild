@@ -9,12 +9,13 @@
   libnotify,
   nix,
   nixos-rebuild,
+  nix-output-monitor,
   shellcheck,
   nixMonitor ? null,
 }:
 stdenvNoCC.mkDerivation {
   pname = "zenos-rebuild";
-  version = "1.1.0";
+  version = "1.1.1";
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
@@ -52,7 +53,7 @@ stdenvNoCC.mkDerivation {
           coreutils
           tmux
           libnotify
-        ] ++ lib.optional (nixMonitor != null) nixMonitor)
+        ] ++ lib.optional (nixMonitor != null) nix-output-monitor)
       }
   '';
   meta = {
