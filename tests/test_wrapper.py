@@ -107,6 +107,20 @@ class WrapperTests(unittest.TestCase):
         self.assertNotIn("json-log-path", sudo)
         self.assertNotIn("--log-format", sudo)
 
+    def test_redirected_stdout_remains_plain_with_terminal_stderr(self):
+        master, slave = pty.openpty()
+        try:
+            with (self.root / "redirected").open("w") as output:
+                result = subprocess.run(["bash", str(SCRIPT), "-d", str(self.config)],
+                                        cwd=self.root, env=self.env, stdin=slave,
+                                        stdout=output, stderr=slave, timeout=5)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("mock build log", (self.root / "redirected").read_text())
+            self.assertFalse(any(call[0] == "nom" for call in self.calls()))
+        finally:
+            os.close(master)
+            os.close(slave)
+
     def test_renderer_failure_drains_logs_and_keeps_build_failure(self):
         code, output = self.run_terminal(REBUILD_EXIT="42", NOM_FAIL="1")
         self.assertEqual(code, 42, output)

@@ -173,7 +173,7 @@ set +e
 # The privileged helper owns a private snapshot for the entire Nix invocation.
 # Compilation is the flake's job, using its pinned current compiler.
 monitor=(cat)
-if [ -t 2 ] && [ "$SHOW_GENERATED" = false ] && [ "${ZENOS_NOM:-1}" != 0 ] && command -v nom >/dev/null; then
+if [ -t 1 ] && [ -t 2 ] && [ "$SHOW_GENERATED" = false ] && [ "${ZENOS_NOM:-1}" != 0 ] && command -v nom >/dev/null; then
     monitor=(nom)
 fi
 sudo python3 "$SNAPSHOT_HELPER" "$(realpath "$FLAKE_PATH")" "$TARGET_HOST" "${snapshot_options[@]}" \
