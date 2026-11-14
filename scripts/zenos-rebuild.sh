@@ -181,7 +181,16 @@ sudo python3 "$SNAPSHOT_HELPER" "$(realpath "$FLAKE_PATH")" "$TARGET_HOST" "${sn
     --print-build-logs \
     --option max-jobs "$MAX_JOBS" \
     --option cores "$CORES_PER_JOB" \
-    --option accept-flake-config true 2>&1 | tee "$LOG_FILE" | { "${monitor[@]}" || cat; }
+    --option accept-flake-config true 2>&1 | tee "$LOG_FILE" | {
+    if [ "${monitor[0]}" = nom ]; then
+        # sudo prompts on /dev/tty: do not let an idle renderer cover authentication.
+        if IFS= read -r -N 1 first; then
+            { printf '%s' "$first"; cat; } | { nom || cat; }
+        fi
+    else
+        cat
+    fi
+}
 
 EXIT_CODE=${PIPESTATUS[0]}
 

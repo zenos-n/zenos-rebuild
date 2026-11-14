@@ -64,3 +64,7 @@ building, so raw log lines cannot collide with graph redraws. The helper's exit
 status is preserved and a failed renderer falls back to draining plain output.
 Generated views, noninteractive invocation and `ZENOS_NOM=0` keep plain output.
 The separate socket monitor remains for `nix run`/`shell` application handoffs.
+
+The renderer waits for the first helper output byte, leaving sudo's terminal
+password prompt visible. No credential-cache assumption or password handling
+is added; empty builds and partial first lines retain their original status/log.

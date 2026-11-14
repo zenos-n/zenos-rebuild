@@ -15,7 +15,7 @@
 }:
 stdenvNoCC.mkDerivation {
   pname = "zenos-rebuild";
-  version = "1.1.1";
+  version = "1.1.2";
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [

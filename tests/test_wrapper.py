@@ -2,6 +2,7 @@ import json
 import os
 import pty
 import select
+import signal
 from pathlib import Path
 import shlex
 import subprocess
@@ -13,7 +14,7 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/zenos-rebuild.sh"
 MOCK = '''
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 name = Path(sys.argv[0]).name
 with open(os.environ["EVENTS"], "a") as log:
@@ -26,6 +27,18 @@ elif name == "tmux" and sys.argv[1] == "has-session":
     sys.exit(1)
 elif name == "sudo":
     if len(sys.argv) > 2 and sys.argv[2].endswith("snapshot.py"):
+        if os.environ.get("AUTH_TTY"):
+            time.sleep(0.2)
+            with open(os.environ["AUTH_TTY"], "w") as tty:
+                tty.write("SUDO_PASSWORD_PROMPT")
+                tty.flush()
+            while not Path(os.environ["AUTH_RELEASE"]).exists():
+                time.sleep(0.01)
+        if os.environ.get("EMPTY_HELPER"):
+            sys.exit(int(os.environ.get("REBUILD_EXIT", "0")))
+        if os.environ.get("PARTIAL_HELPER"):
+            sys.stdout.write("partial first line")
+            sys.exit(42)
         print("mock build log", flush=True)
         if os.environ.get("REPORT_TTY"):
             print("HELPER_TTY=" + json.dumps([os.isatty(i) for i in range(3)]), flush=True)
@@ -69,9 +82,11 @@ class WrapperTests(unittest.TestCase):
 
     def run_terminal(self, **environment):
         master, slave = pty.openpty()
+        if environment.pop("AUTH_PROMPT_TEST", None):
+            environment |= {"AUTH_TTY": os.ttyname(slave), "AUTH_RELEASE": str(self.root / "authorized")}
         proc = subprocess.Popen(["bash", str(SCRIPT), "-d", str(self.config)],
                                 cwd=self.root, stdin=slave, stdout=slave, stderr=slave,
-                                env=self.env | environment)
+                                env=self.env | environment, start_new_session=True)
         os.close(slave)
         output = bytearray()
         try:
@@ -85,9 +100,17 @@ class WrapperTests(unittest.TestCase):
                     if not chunk:
                         break
                     output.extend(chunk)
+                    if environment.get("AUTH_TTY") and b"SUDO_PASSWORD_PROMPT" in output:
+                        self.assertFalse(any(call[0] == "nom" for call in self.calls()), output.decode())
+                        (self.root / "authorized").touch()
+                        environment.pop("AUTH_TTY")
             return proc.wait(timeout=1), output.decode()
         finally:
             os.close(master)
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
@@ -106,6 +129,24 @@ class WrapperTests(unittest.TestCase):
         sudo = next(call for call in self.calls() if call[0] == "sudo")
         self.assertNotIn("json-log-path", sudo)
         self.assertNotIn("--log-format", sudo)
+
+    def test_authentication_prompt_precedes_renderer(self):
+        code, output = self.run_terminal(AUTH_PROMPT_TEST="1")
+        self.assertEqual(code, 0, output)
+        self.assertIn("SUDO_PASSWORD_PROMPT", output)
+        self.assertIn("RENDERED:mock build log", output)
+
+    def test_empty_failed_helper_does_not_start_renderer(self):
+        code, output = self.run_terminal(EMPTY_HELPER="1", REBUILD_EXIT="42")
+        self.assertEqual(code, 42, output)
+        self.assertFalse(any(call[0] == "nom" for call in self.calls()))
+
+    def test_partial_first_line_is_preserved(self):
+        code, output = self.run_terminal(PARTIAL_HELPER="1")
+        self.assertEqual(code, 42, output)
+        self.assertIn("RENDERED:partial first line", output)
+        log = next((self.root / "state/zenos/rebuild-logs").glob("*.log")).read_text()
+        self.assertEqual(log, "partial first line")
 
     def test_redirected_stdout_remains_plain_with_terminal_stderr(self):
         master, slave = pty.openpty()
